@@ -1,0 +1,124 @@
+# root_agent.py
+
+from google.adk.agent import BaseAgent
+from .analysis_agent import AnalysisAgent
+
+class RootAgent(BaseAgent):
+    def __init__(self, name: str, analysis_agent: AnalysisAgent):
+        super().__init__(name)
+        self.analysis_agent = analysis_agent
+
+    async def _run_async_impl(self, context):
+        # 1. Get the raw input from the user.
+        user_prompt = context.history.last_user_message().text.strip()
+        print(f"Root Agent received raw prompt: '{user_prompt}'")
+        
+        # 2. Forward the raw input to the Analysis Agent without any processing.
+        analysis_result = await self.analysis_agent.run_async(user_prompt)
+        
+        # 3. Yield the final result from the analysis chain.
+        yield analysis_result
+
+# analysis_agent.py
+
+from google.adk.agent import BaseAgent
+from google.adk.types import Event
+from .tag_agent import TagAgent
+from .summary_agent import SummaryAgent
+
+class AnalysisAgent(BaseAgent):
+    def __init__(self, name: str, tag_agent: TagAgent, summary_agent: SummaryAgent):
+        super().__init__(name)
+        self.tag_agent = tag_agent
+        self.summary_agent = summary_agent
+
+    async def _run_async_impl(self, context):
+        raw_input = context.history.last_user_message().text.strip()
+        print(f"Analysis Agent received raw input: '{raw_input}'")
+
+        # Decision-making: Extract the app ID from the raw input using a non-LLM rule.
+        # This is where the core logic lives.
+        app_id_prefix = "app"
+        if not raw_input.lower().startswith(app_id_prefix):
+            # If the raw input doesn't start with "app", it's an invalid request for this workflow.
+            yield Event(text="Invalid input format. Please provide a valid app ID like 'app4868'.")
+            return
+        
+        app_id = raw_input.lower()
+        print(f"Analysis Agent extracted app ID: '{app_id}'")
+
+        # Action 1: Pass the extracted app ID to the Tag Agent.
+        tag_agent_output = await self.tag_agent.run_async(app_id)
+
+        # Action 2: Pass the Tag Agent's output to the Summary Agent.
+        final_summary = await self.summary_agent.run_async(tag_agent_output)
+
+        # Yield the final result back up the chain to the root agent.
+        yield final_summary
+# tag_agent.py
+
+from google.adk.agent import BaseAgent
+from google.adk.types import Event
+from your_project.summary_agent import SummaryAgent
+
+# A function that acts as a "tool" to get the data.
+# This could be a real database query or an API call.
+def get_resources_with_missing_tags(app_id: str) -> str:
+    """
+    Retrieves resources with missing tags for a given application ID.
+    """
+    print(f"Tag Agent is querying for resources for app ID: '{app_id}'")
+    
+    if app_id == "app4868":
+        resources = [
+            "VM: Prod-WebApp-01",
+            "VM: Dev-Database-05",
+            "Load Balancer: Public-Web-LB"
+        ]
+        return f"Resources for {app_id} with missing tags:\n" + "\n".join(resources)
+    else:
+        return f"No resources with missing tags found for '{app_id}'."
+
+class TagAgent(BaseAgent):
+    def __init__(self, name: str, summary_agent: SummaryAgent):
+        super().__init__(name)
+        self.summary_agent = summary_agent
+        
+    async def _run_async_impl(self, context):
+        # 1. Perception: Get the app ID passed from the previous agent.
+        app_id = context.history.last_user_message().text
+        
+        # 2. Action (Non-LLM): Call the deterministic function to get the data.
+        resources = get_resources_with_missing_tags(app_id)
+        
+        # 3. Action (Delegation): Forward the structured data to the LLM Summary Agent.
+        # This is where the output is passed to the next stage in the pipeline.
+        final_summary = await self.summary_agent.run_async(resources)
+        
+        # 4. Yield the final result from the LLM agent back up the chain.
+        yield final_summary
+
+# summary_agent.py
+
+from google.adk.agent import LlmAgent
+from google.adk.models import LlmModel
+
+class SummaryAgent(LlmAgent):
+    def __init__(self, name: str, model: LlmModel):
+        super().__init__(name, model)
+        
+        # The prompt or instruction for the LLM is defined here.
+        self.instruction = """
+        You are a helpful assistant that summarizes technical information.
+        Take the provided list of resources and summarize the findings.
+        If a list is provided, format it clearly for readability.
+        If no resources are found, provide a clear message.
+        Do not add any information not present in the input.
+        """
+
+    async def _run_async_impl(self, context):
+        # The LlmAgent's core logic is handled by the framework.
+        # It automatically takes the input text (from the previous agent),
+        # combines it with the `self.instruction`, and sends it to the LLM.
+        # The output from the LLM is what's yielded.
+        pass
