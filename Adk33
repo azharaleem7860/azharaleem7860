@@ -1,0 +1,169 @@
+Yes, Azhar—you can absolutely shift agent instantiation to be manifest-driven, removing hardcoded agent wiring from your `RootAgent` or main file. This is a powerful architectural upgrade that makes your system:
+
+• 🔧 Plug-and-play: Add new agents by dropping in a manifest file
+• 📦 Declarative: Agent behavior and dependencies are defined in config
+• 🚀 Scalable: No need to modify orchestration code for new agents
+
+
+Let me show you how to do it.
+
+---
+
+🧠 Step 1: Enhanced Manifest Format
+
+Each agent manifest should declare:
+
+{
+  "agent_name": "LambdaTagAgent",
+  "class_path": "lambda_tag_agent.LambdaTagAgent",
+  "type": "domain_executor",
+  "context_type": "lambda_tagging",
+  "dependencies": ["SummaryAgent"],
+  "version": "2.0.0"
+}
+
+
+🔍 `class_path` tells the loader where to import the class from.
+
+---
+
+🧩 Step 2: Manifest-Driven Agent Factory
+
+import importlib
+import json
+import os
+
+class AgentFactory:
+    def __init__(self, manifest_dir):
+        self.manifest_dir = manifest_dir
+        self.manifests = {}
+        self.agents = {}
+
+    def load_manifests(self):
+        for file in os.listdir(self.manifest_dir):
+            if file.endswith(".json"):
+                with open(os.path.join(self.manifest_dir, file)) as f:
+                    manifest = json.load(f)
+                    self.manifests[manifest["agent_name"]] = manifest
+
+    def instantiate_agents(self):
+        for name, manifest in self.manifests.items():
+            cls = self._import_class(manifest["class_path"])
+            deps = [self.agents[dep] for dep in manifest.get("dependencies", [])]
+            agent = cls(*deps) if deps else cls()
+            self.agents[name] = agent
+
+    def _import_class(self, class_path):
+        module_name, class_name = class_path.rsplit(".", 1)
+        module = importlib.import_module(module_name)
+        return getattr(module, class_name)
+
+    def get_agent(self, name):
+        return self.agents.get(name)
+
+
+---
+
+🧩 Step 3: RootAgent Instantiation (No Hardcoding)
+
+factory = AgentFactory(manifest_dir="manifests/")
+factory.load_manifests()
+factory.instantiate_agents()
+
+analysis_agent = factory.get_agent("AnalysisAgent")
+root_agent = RootAgent(analysis_agent=analysis_agent)
+
+
+---
+
+✅ Benefits
+
+• No hardcoded agent classes or wiring
+• Agents self-declare their dependencies
+• Easy to swap versions or add new agents
+• Supports dynamic orchestration and registry-based routing
+
+
+---
+
+Would you like help generating a full set of manifests for your current agents (`LambdaTagAgent`, `S3TagAgent`, `SummaryAgent`, `AnalysisAgent`, `RegistryAgent`) in this format? I can build the whole manifest directory for you.
+Perfect, Azhar. If your main file is the one that defines and runs `RootAgent`, then it should serve as the entry point for your entire multi-agent system. That means it’s responsible for:
+
+• Instantiating all dependencies (SummaryAgent, TagAgents, RegistryAgent, etc.)
+• Wiring them together using your manifest loader
+• Passing the orchestrator (`AnalysisAgent`) into `RootAgent`
+• Accepting user input and invoking `run_async_impl`
+
+
+Let’s make your `root_agent.py` file clean, modular, and ready to run.
+
+---
+
+✅ Final `root_agent.py` (Main Entry Point)
+
+from google.adk.agents import BaseAgent
+from manifest_loader import ManifestLoader
+from registry_agent import RegistryAgent
+from analysis_agent import AnalysisAgent
+from summary_agent import SummaryAgent
+from lambda_tag_agent import LambdaTagAgent
+from s3_tag_agent import S3TagAgent
+
+class RootAgent(BaseAgent):
+    def __init__(self, analysis_agent: AnalysisAgent):
+        super().__init__(name="RootAgent")
+        self.analysis_agent = analysis_agent
+
+    async def run_async_impl(self, user_input: str, **kwargs):
+        if not user_input:
+            return {"error": "No input provided"}
+        return await self.analysis_agent.run_async_impl(user_input=user_input, **kwargs)
+
+# 🔧 Instantiate everything
+manifest_loader = ManifestLoader(manifest_dir="manifests/")
+manifest_loader.load_manifests()
+
+registry_agent = RegistryAgent(manifest_loader=manifest_loader)
+summary_agent = SummaryAgent()
+
+lambda_tag_agent = LambdaTagAgent(summary_agent=summary_agent)
+s3_tag_agent = S3TagAgent(summary_agent=summary_agent)
+
+tag_agents = {
+    "LambdaTagAgent": lambda_tag_agent,
+    "S3TagAgent": s3_tag_agent
+}
+
+analysis_agent = AnalysisAgent(
+    registry_agent=registry_agent,
+    tag_agents=tag_agents,
+    summary_agent=summary_agent
+)
+
+# ✅ Create the root agent
+root_agent = RootAgent(analysis_agent=analysis_agent)
+
+# 🧪 Example usage
+import asyncio
+
+async def test():
+    result = await root_agent.run_async_impl("app:4868 lambda tagging")
+    print(result)
+
+if __name__ == "__main__":
+    asyncio.run(test())
+
+
+---
+
+🧠 Why This Works
+
+• Keeps `RootAgent` focused on delegation
+• Uses manifest loader for dynamic routing
+• Cleanly wires all dependencies
+• Ready for CLI, API, or ADK Web integration
+
+
+---
+
+Would you like help converting this into a FastAPI endpoint or wrapping it in a CLI tool for interactive testing? I can help you deploy it in seconds.
