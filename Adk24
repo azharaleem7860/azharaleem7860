@@ -1,0 +1,236 @@
+Let’s dive into the Tag Agent, Azhar—the workhorse of your multi-agent architecture. This agent is responsible for executing domain-specific logic (e.g., tagging AWS Lambda resources for `app4868`) and preparing structured output for the Summarizer Agent.
+
+---
+
+🧠 Tag Agent Responsibilities
+
+Task	Description	
+Receive structured context	From Analysis Agent (e.g., app_id, method, action)	
+Execute domain logic	Call internal functions or external APIs	
+Handle errors gracefully	Return fallback messages or escalate	
+Format output	Prepare structured data for summarization	
+Update session state	Optionally store results for downstream agents	
+
+
+---
+
+🧪 Sample Implementation (Python + ADK)
+
+from google.adk.agents import BaseAgent
+from google.adk.event_types import InvocationContext
+from google.adk.events import Event
+
+class TagAgent(BaseAgent):
+    def __init__(self, name: str, summary_agent: BaseAgent):
+        super().__init__(name=name)
+        self.summary_agent = summary_agent
+
+    async def run_async_impl(self, context: InvocationContext, **kwargs):
+        app_id = context.get("app_id")
+        method = context.get("method")
+        action = context.get("action")
+
+        print(f"🔧 TagAgent executing {method} {action} for app_id: {app_id}")
+
+        # Step 1: Execute domain logic
+        result = self.execute_tagging(app_id, method, action)
+
+        if result.get("status") == "error":
+            return {
+                "error": f"❌ TagAgent failed: {result['message']}"
+            }
+
+        # Step 2: Format output
+        processed_data = self.format_result(result.get("resources", []), app_id)
+
+        # Step 3: Store in session state (optional)
+        context.session.state["processed_data"] = processed_data
+
+        # Step 4: Forward to Summary Agent
+        summary_result = await self.summary_agent.run_async_impl(context)
+        return summary_result
+
+    def execute_tagging(self, app_id, method, action):
+        # Replace with actual tagging logic or API call
+        return summarize_resources_by_awsid(appid_filter=app_id)
+
+    def format_result(self, resources, app_id):
+        if not resources:
+            return f"📭 No resources with missing tags found for app '{app_id}'."
+
+        formatted = "\n".join([
+            f"- {r.get('name', 'N/A')} | Type: {r.get('type', 'N/A')} | Region: {r.get('region', 'N/A')}"
+            for r in resources
+        ])
+        return f"📋 Resources with missing tags for app '{app_id}':\n\n{formatted}"
+
+
+---
+
+🔗 Integration Flow
+
+AnalysisAgent → TagAgent → SummaryAgent
+
+
+The Tag Agent receives structured context, runs tagging logic, formats the result, and hands it off to the Summarizer Agent.
+
+---
+
+🧩 Optional Enhancements
+
+• ToolAgent integration: If tagging logic is modular, wrap it in a ToolAgent and invoke via manifest.
+• Event emission: Emit intermediate events for observability or chaining.
+• Retry logic: Handle transient failures with exponential backoff.
+
+
+---
+
+Let’s wrap the architecture with your Summary Agent, Azhar—the final step in your multi-agent pipeline. This agent uses an LLM (like Gemini) to convert structured tagging results into a concise, human-readable summary. It’s the only LLM-powered agent in your flow, and its job is to stay focused, factual, and format-aware.
+
+---
+
+🧠 Summary Agent Responsibilities
+
+Task	Description	
+Accept structured input	From Tag Agent (e.g., list of resources with missing tags)	
+Generate summary	Use LLM to produce a concise, readable report	
+Include metadata	Reference app_id, resource types, regions, etc.	
+Avoid hallucination	Stay grounded in the provided data	
+Format output	Markdown, plain text, or structured response depending on downstream use	
+
+
+---
+
+🧪 Sample Implementation (Python + ADK)
+
+from google.als.agents import llmAgent
+
+class SummaryAgent(llmAgent):
+    def __init__(self):
+        super().__init__(
+            name="SummaryAgent",
+            model="gemini-4-0-flan-t",
+            instructions="""
+            Use the following data to create a concise summary. The data lists resources with missing tags for a given application.
+            Include the application ID in the summary. Do not invent any information. Format the output as a readable report.
+            """
+        )
+        self.processed_data = []
+
+    async def run_async_impl(self, context, **kwargs):
+        processed_data = context.session.state.get("processed_data", "")
+        if not processed_data:
+            return {"error": "No processed data found in session state."}
+
+        prompt = f"""
+        Application Tagging Summary:
+
+        {processed_data}
+        """
+
+        print(f"🧠 SummaryAgent generating summary for:\n{prompt}")
+        response = await self.model.run_async(prompt)
+        return {"summary": response}
+
+
+---
+
+🔗 Integration Flow
+
+TagAgent → SummaryAgent → Final Output
+
+
+The Summary Agent receives structured tagging results, uses the LLM to summarize them, and returns a clean report.
+
+---
+
+🧩 Optional Enhancements
+
+• Schema-constrained output: Use JSON schema or Markdown templates to guide the LLM.
+• Multi-format support: Allow toggling between plain text, HTML, or Quip-style summaries.
+• Audit trail: Log both input and output for traceability and debugging.
+
+
+---
+
+🧬 Example Output
+
+📋 Summary for app4868:
+
+3 AWS Lambda resources are missing tags:
+- `lambda-user-sync` | Region: us-east-1 | Type: Lambda
+- `lambda-data-cleaner` | Region: us-west-2 | Type: Lambda
+- `lambda-alert-handler` | Region: eu-central-1 | Type: Lambda
+
+Recommended: Apply standard tagging policy for cost allocation and compliance.
+
+
+---
+
+Here’s a clean, production-ready version of the summary function for your `SummaryAgent`, Azhar. This function takes structured tagging data (from the `TagAgent`), formats it into a prompt, and uses the Gemini LLM to generate a concise, readable summary.
+
+---
+
+🧠 Purpose
+
+• Accept structured resource data from session state
+• Format it into a prompt with clear instructions
+• Call the LLM model to generate a summary
+• Return the summary as output
+
+
+---
+
+🧪 Summary Function (Python)
+
+async def run_async_impl(self, context, **kwargs):
+    processed_data = context.session.state.get("processed_data", "")
+    if not processed_data:
+        return {"error": "No processed data found in session state."}
+
+    # Build prompt for LLM
+    prompt = f"""
+    You are a cloud resource auditor. Summarize the following data listing resources with missing tags for a given application.
+
+    {processed_data}
+
+    Instructions:
+    - Include the application ID in the summary
+    - Mention the number of affected resources
+    - Highlight resource types and regions
+    - Do not invent or infer any data
+    - Format the output as a readable report
+    """
+
+    print(f"🧠 SummaryAgent generating summary for:\n{prompt}")
+    response = await self.model.run_async(prompt)
+
+    return {
+        "summary": response,
+        "app_id": self.extract_app_id(processed_data)
+    }
+
+
+---
+
+🔍 Optional Helper: Extract App ID
+
+def extract_app_id(self, text: str) -> str:
+    # Simple pattern-based extraction
+    match = re.search(r"app ['\"]?(\w+)['\"]?", text)
+    return match.group(1) if match else "unknown"
+
+
+---
+
+🧩 Output Example
+
+{
+  "summary": "📋 Summary for app4868:\n3 Lambda resources missing tags across 3 regions. Recommend applying standard tagging policy.",
+  "app_id": "app4868"
+}
+
+
+---
+
+This function keeps your summarization grounded, structured, and audit-friendly. Would you like to extend it with Markdown formatting, Quip integration, or schema-constrained output next? I can help tailor it to your reporting needs.
