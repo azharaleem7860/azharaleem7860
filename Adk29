@@ -1,0 +1,203 @@
+Absolutely, Azhar. Here’s a complete, modular setup for your multi-agent architecture in Google ADK, including each agent’s implementation and its corresponding manifest file. This design is declarative, scalable, and production-ready.
+
+---
+
+🧩 1. Root Agent
+
+🔧 Code
+
+from google.adk.agents import BaseAgent
+
+class RootAgent(BaseAgent):
+    def __init__(self, analysis_agent):
+        super().__init__(name="RootAgent")
+        self.analysis_agent = analysis_agent
+
+    async def run_async_impl(self, user_input, **kwargs):
+        if not user_input:
+            return {"error": "No input provided"}
+        return await self.analysis_agent.run_async_impl(user_input=user_input, **kwargs)
+
+
+📄 Manifest (`root_agent.json`)
+
+{
+  "agent_name": "RootAgent",
+  "type": "orchestrator",
+  "sub_agents": ["AnalysisAgent"],
+  "version": "1.0.0"
+}
+
+
+---
+
+🧩 2. Analysis Agent
+
+🔧 Code
+
+class AnalysisAgent(BaseAgent):
+    def __init__(self, registry_agent, tag_agents, summary_agent):
+        super().__init__(name="AnalysisAgent")
+        self.registry_agent = registry_agent
+        self.tag_agents = tag_agents
+        self.summary_agent = summary_agent
+
+    async def run_async_impl(self, user_input, **kwargs):
+        parts = user_input.strip().split()
+        if len(parts) != 3 or not parts[0].startswith("app:"):
+            return {"error": "Invalid format. Use 'app:<id> <method> <action>'"}
+
+        app_id = parts[0][4:]
+        method = parts[1].lower()
+        action = parts[2].lower()
+        context_type = f"{method}_{action}"
+
+        target_agent_name = await self.registry_agent.get_agent_for_context(context_type)
+        if not target_agent_name or target_agent_name not in self.tag_agents:
+            return {"error": f"No agent found for context: {context_type}"}
+
+        context = {
+            "app_id": app_id,
+            "method": method,
+            "action": action,
+            "context_type": context_type
+        }
+
+        tag_result = await self.tag_agents[target_agent_name].run_async_impl(context)
+        return await self.summary_agent.run_async_impl(tag_result)
+
+
+📄 Manifest (`analysis_agent.json`)
+
+{
+  "agent_name": "AnalysisAgent",
+  "type": "interpreter",
+  "context_parser": "app_id + method + action",
+  "routes_via_registry": true,
+  "dependencies": ["RegistryAgent", "TagAgent", "SummaryAgent"],
+  "version": "1.1.0"
+}
+
+
+---
+
+🧩 3. Registry Agent
+
+🔧 Code
+
+class RegistryAgent(BaseAgent):
+    def __init__(self, manifest_path):
+        super().__init__(name="RegistryAgent")
+        with open(manifest_path, 'r') as f:
+            self.registry = json.load(f)["agents"]
+
+    async def get_agent_for_context(self, context_type):
+        for agent_name, config in self.registry.items():
+            if config.get("context_type") == context_type:
+                return agent_name
+        return None
+
+
+📄 Manifest (`registry_agent.json`)
+
+{
+  "agent_name": "RegistryAgent",
+  "type": "registry",
+  "agents": {
+    "LambdaTagAgent": {
+      "context_type": "lambda_tagging",
+      "functions": ["apply_tags", "audit_tags"],
+      "version": "2.0.0"
+    },
+    "S3TagAgent": {
+      "context_type": "s3_tagging",
+      "functions": ["apply_bucket_tags"],
+      "version": "1.1.0"
+    }
+  }
+}
+
+
+---
+
+🧩 4. Tag Agent (Example: LambdaTagAgent)
+
+🔧 Code
+
+class LambdaTagAgent(BaseAgent):
+    def __init__(self, summary_agent):
+        super().__init__(name="LambdaTagAgent")
+        self.summary_agent = summary_agent
+
+    async def run_async_impl(self, context, **kwargs):
+        app_id = context["app_id"]
+        result = summarize_resources_by_awsid(appid_filter=app_id)
+
+        if result.get("status") == "error":
+            return {"error": result["message"]}
+
+        resources = result.get("resources", [])
+        formatted = "\n".join([
+            f"- {r.get('name', 'N/A')} | Type: {r.get('type', 'N/A')} | Region: {r.get('region', 'N/A')}"
+            for r in resources
+        ])
+        context["processed_data"] = f"📋 Resources for app '{app_id}':\n\n{formatted}"
+        return context
+
+
+📄 Manifest (`lambda_tag_agent.json`)
+
+{
+  "agent_name": "LambdaTagAgent",
+  "type": "domain_executor",
+  "context_type": "lambda_tagging",
+  "functions": ["apply_tags", "audit_tags"],
+  "output_format": "structured_json",
+  "version": "2.0.0",
+  "dependencies": ["SummaryAgent"]
+}
+
+
+---
+
+🧩 5. Summary Agent
+
+🔧 Code
+
+class SummaryAgent(llmAgent):
+    def __init__(self):
+        super().__init__(
+            name="SummaryAgent",
+            model="gemini-4-0-flan-t",
+            instructions="""
+            Use the following data to create a concise summary. The data lists resources with missing tags for a given application.
+            Include the application ID in the summary. Do not invent any information.
+            """
+        )
+
+    async def run_async_impl(self, context, **kwargs):
+        processed_data = context.get("processed_data", "")
+        if not processed_data:
+            return {"error": "No processed data found."}
+
+        prompt = f"Application Tagging Summary:\n\n{processed_data}"
+        response = await self.model.run_async(prompt)
+        return {"summary": response}
+
+
+📄 Manifest (`summary_agent.json`)
+
+{
+  "agent_name": "SummaryAgent",
+  "type": "llm_summarizer",
+  "model": "gemini-4-0-flan-t",
+  "input_format": "structured_json",
+  "output_format": "markdown",
+  "instructions": "Summarize resources with missing tags. Include app ID and region.",
+  "version": "1.0.0"
+}
+
+
+---
+
+Would you like me to generate a visual diagram showing how these agents interact, or help you build a manifest registry loader that auto-discovers these files from a directory?
