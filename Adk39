@@ -1,0 +1,105 @@
+Here’s your fully updated `AgentFactory` class, Azhar—now with a robust `get_agent()` method that validates agent existence and type before returning it. This version is designed to prevent silent failures and ensure every retrieved agent is a valid instance of `BaseAgent`.
+
+---
+
+✅ `agent_factory.py` — Final Version with Safe `get_agent`
+
+import os
+import json
+import importlib
+from typing import Dict, Any
+from agent import BaseAgent  # Adjust if BaseAgent is located elsewhere
+
+class AgentFactory:
+    def __init__(self, manifest_dir: str):
+        self.manifest_dir = manifest_dir
+        self.manifests: Dict[str, Dict[str, Any]] = {}
+        self.agents: Dict[str, Any] = {}
+
+    def load_manifests(self):
+        for filename in os.listdir(self.manifest_dir):
+            if filename.endswith(".json"):
+                path = os.path.join(self.manifest_dir, filename)
+                try:
+                    with open(path, "r") as f:
+                        manifest = json.load(f)
+                        agent_name = manifest.get("agent_name")
+                        if not agent_name:
+                            print(f"⚠️ Skipping manifest {filename}: missing 'agent_name'")
+                            continue
+                        self.manifests[agent_name] = manifest
+                except Exception as e:
+                    print(f"❌ Failed to load manifest {filename}: {e}")
+
+    def instantiate_agents(self):
+        for agent_name in self.manifests:
+            if agent_name not in self.agents:
+                self._instantiate_agent_recursive(agent_name)
+
+    def _instantiate_agent_recursive(self, agent_name: str):
+        if agent_name in self.agents:
+            return self.agents[agent_name]
+
+        manifest = self.manifests.get(agent_name)
+        if not manifest:
+            raise ValueError(f"Manifest not found for agent: {agent_name}")
+
+        dep_names = manifest.get("dependencies") or []
+        if not isinstance(dep_names, list):
+            raise TypeError(f"Dependencies for {agent_name} must be a list")
+
+        dep_instances = []
+        for dep_name in dep_names:
+            if dep_name not in self.manifests:
+                print(f"⚠️ Dependency '{dep_name}' not found for agent '{agent_name}'")
+                continue
+            dep_instance = self._instantiate_agent_recursive(dep_name)
+            dep_instances.append(dep_instance)
+
+        try:
+            agent_class = self._import_class(manifest["class_path"])
+            config = manifest.get("config", {})
+            if not isinstance(config, dict):
+                config = {}
+            agent_instance = agent_class(*dep_instances, **config)
+            self.agents[agent_name] = agent_instance
+            print(f"✅ Instantiated agent: {agent_name}")
+            return agent_instance
+        except Exception as e:
+            print(f"❌ Failed to instantiate agent '{agent_name}': {e}")
+            return None
+
+    def _import_class(self, class_path: str):
+        module_name, class_name = class_path.rsplit(".", 1)
+        module = importlib.import_module(module_name)
+        return getattr(module, class_name)
+
+    def get_agent(self, agent_name: str):
+        agent = self.agents.get(agent_name)
+        if agent is None:
+            raise ValueError(f"Agent '{agent_name}' not found or failed to instantiate.")
+        if not isinstance(agent, BaseAgent):
+            raise TypeError(f"Agent '{agent_name}' is not a valid BaseAgent. Got: {type(agent)}")
+        return agent
+
+
+---
+
+🧠 Why This Works
+
+• Prevents `NoneType` errors by validating agent existence
+• Ensures every agent returned is a subclass of `BaseAgent`
+• Logs instantiation success and failure clearly
+• Supports both positional dependency injection and optional config
+
+
+---
+
+Let me know if you’d like to add:
+
+• 🔄 Hot-reload support for manifests
+• 🧪 A test harness to simulate full orchestration
+• 📊 A dashboard to visualize agent health and dependency graphs
+
+
+We can make this system bulletproof and beautifully introspectable.
