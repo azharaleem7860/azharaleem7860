@@ -1,0 +1,97 @@
+Perfect approach, Azhar—starting with the `RootAgent` ensures we anchor the orchestration layer correctly before layering in dependencies. Let’s lock down two things:
+
+---
+
+✅ Step 1: `root_agent.json` Manifest
+
+This manifest should live in your `manifests/` directory and reflect your actual file and class structure.
+
+{
+  "agent_name": "RootAgent",
+  "type": "orchestrator",
+  "class_path": "agents.agent.RootAgent",
+  "dependencies": ["AnalysisAgent"],
+  "version": "1.0.0"
+}
+
+
+🔍 Assumes:
+
+• `RootAgent` is defined in `agents/agent.py`
+• `AnalysisAgent` will be instantiated separately and injected
+
+
+---
+
+✅ Step 2: Minimal `AgentFactory` for RootAgent
+
+Here’s a trimmed version of the factory that only loads and instantiates `RootAgent` and its immediate dependency:
+
+import os
+import json
+import importlib
+from typing import Dict, Any
+from agent import BaseAgent  # Adjust if needed
+
+class AgentFactory:
+    def __init__(self, manifest_dir: str):
+        self.manifest_dir = manifest_dir
+        self.manifests: Dict[str, Dict[str, Any]] = {}
+        self.agents: Dict[str, Any] = {}
+
+    def load_manifests(self):
+        for filename in os.listdir(self.manifest_dir):
+            if filename.endswith(".json"):
+                path = os.path.join(self.manifest_dir, filename)
+                with open(path, "r") as f:
+                    manifest = json.load(f)
+                    agent_name = manifest.get("agent_name")
+                    if agent_name:
+                        self.manifests[agent_name] = manifest
+
+    def instantiate_agent(self, agent_name: str):
+        if agent_name in self.agents:
+            return self.agents[agent_name]
+
+        manifest = self.manifests.get(agent_name)
+        if not manifest:
+            raise ValueError(f"Manifest not found for agent: {agent_name}")
+
+        dep_names = manifest.get("dependencies") or []
+        dep_instances = [self.instantiate_agent(dep) for dep in dep_names]
+
+        agent_class = self._import_class(manifest["class_path"])
+        config = manifest.get("config", {})
+        agent_instance = agent_class(*dep_instances, **config)
+        self.agents[agent_name] = agent_instance
+        return agent_instance
+
+    def _import_class(self, class_path: str):
+        module_name, class_name = class_path.rsplit(".", 1)
+        module = importlib.import_module(module_name)
+        return getattr(module, class_name)
+
+    def get_agent(self, agent_name: str):
+        agent = self.agents.get(agent_name)
+        if not isinstance(agent, BaseAgent):
+            raise TypeError(f"Agent '{agent_name}' is not a valid BaseAgent. Got: {type(agent)}")
+        return agent
+
+
+---
+
+🧪 Test It
+
+In your `main.py` or test harness:
+
+factory = AgentFactory(manifest_dir="manifests/")
+factory.load_manifests()
+root_agent = factory.instantiate_agent("RootAgent")
+
+result = await root_agent.run_async_impl("app:4868 lambda tagging")
+print(result)
+
+
+---
+
+Let’s confirm this works cleanly before layering in `AnalysisAgent`. If you hit any errors, send me the traceback and I’ll walk you through the fix line by line.
