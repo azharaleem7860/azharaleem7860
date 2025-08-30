@@ -1,0 +1,111 @@
+Absolutely, Azhar. Here’s a clean, modular setup for your manifest-driven architecture—starting with just the `RootAgent`. These two files will give you a solid foundation:
+
+---
+
+📁 `agents/agent.py` — BaseAgent + RootAgent
+
+from abc import ABC, abstractmethod
+from typing import Any, Dict
+
+class BaseAgent(ABC):
+    def __init__(self, name: str):
+        self.name = name
+
+    @abstractmethod
+    async def run_async_impl(self, user_input: Any, **kwargs) -> Dict:
+        pass
+
+    def __repr__(self):
+        return f"<Agent: {self.name}>"
+
+# ✅ RootAgent definition
+class RootAgent(BaseAgent):
+    def __init__(self, analysis_agent):
+        super().__init__(name="RootAgent")
+        self.analysis_agent = analysis_agent
+
+    async def run_async_impl(self, user_input: str, **kwargs) -> Dict:
+        if not user_input:
+            return {"error": "No input provided"}
+        return await self.analysis_agent.run_async_impl(user_input=user_input, **kwargs)
+
+
+🔍 `RootAgent` expects an `AnalysisAgent` instance injected via manifest-driven factory.
+
+---
+
+📁 `agent_factory.py` — Minimal AgentFactory
+
+import os
+import json
+import importlib
+from typing import Dict, Any
+from agents.agent import BaseAgent  # Adjust if needed
+
+class AgentFactory:
+    def __init__(self, manifest_dir: str):
+        self.manifest_dir = manifest_dir
+        self.manifests: Dict[str, Dict[str, Any]] = {}
+        self.agents: Dict[str, Any] = {}
+
+    def load_manifests(self):
+        for filename in os.listdir(self.manifest_dir):
+            if filename.endswith(".json"):
+                path = os.path.join(self.manifest_dir, filename)
+                try:
+                    with open(path, "r") as f:
+                        manifest = json.load(f)
+                        agent_name = manifest.get("agent_name")
+                        if agent_name:
+                            self.manifests[agent_name] = manifest
+                except Exception as e:
+                    print(f"❌ Failed to load manifest {filename}: {e}")
+
+    def instantiate_agent(self, agent_name: str):
+        if agent_name in self.agents:
+            return self.agents[agent_name]
+
+        manifest = self.manifests.get(agent_name)
+        if not manifest:
+            raise ValueError(f"Manifest not found for agent: {agent_name}")
+
+        dep_names = manifest.get("dependencies") or []
+        if not isinstance(dep_names, list):
+            raise TypeError(f"Dependencies for {agent_name} must be a list")
+
+        dep_instances = [self.instantiate_agent(dep) for dep in dep_names]
+
+        try:
+            agent_class = self._import_class(manifest["class_path"])
+            config = manifest.get("config", {})
+            if not isinstance(config, dict):
+                config = {}
+            agent_instance = agent_class(*dep_instances, **config)
+            self.agents[agent_name] = agent_instance
+            print(f"✅ Instantiated agent: {agent_name}")
+            return agent_instance
+        except Exception as e:
+            print(f"❌ Failed to instantiate agent '{agent_name}': {e}")
+            return None
+
+    def _import_class(self, class_path: str):
+        module_name, class_name = class_path.rsplit(".", 1)
+        module = importlib.import_module(module_name)
+        return getattr(module, class_name)
+
+    def get_agent(self, agent_name: str):
+        agent = self.agents.get(agent_name)
+        if agent is None:
+            raise ValueError(f"Agent '{agent_name}' not instantiated.")
+        if not isinstance(agent, BaseAgent):
+            raise TypeError(f"Agent '{agent_name}' is not a valid BaseAgent. Got: {type(agent)}")
+        return agent
+
+
+---
+
+🧪 Next Step
+
+Let’s test this setup with just `RootAgent` and a stub `AnalysisAgent`. Once that’s working, we’ll layer in the real `AnalysisAgent`, registry, and tagging agents.
+
+Want me to generate a stub `analysis_agent.py` and its manifest next so you can run a full test?
